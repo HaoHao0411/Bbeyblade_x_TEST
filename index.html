@@ -313,7 +313,7 @@
       <div class="logo">B</div>
       <div>
         <div class="name">BEYBLADE X TRACKER</div>
-        <div class="sub">LAUNCH TELEMETRY</div>
+        <div class="sub">LAUNCH TELEMETRY · <span id="appVersionTag">V1</span></div>
       </div>
     </div>
     <div class="topbar-right">
@@ -669,8 +669,21 @@ async function runOtaTransfer(buffer) {
   }
 
   if (!finished) {
-    await controlChar.writeValue(new TextEncoder().encode('END'));
-    otaLog('傳輸完成,等待裝置驗證...');
+    try {
+      await controlChar.writeValue(new TextEncoder().encode('END'));
+      otaLog('傳輸完成,等待裝置驗證...');
+    } catch (e) {
+      // The device reboots into the new firmware right after a
+      // successful update, which drops the BLE connection -- if that
+      // happens to land while this "END" write is still waiting for
+      // its acknowledgement, the write itself can come back as a GATT
+      // error even though the update genuinely succeeded. Don't treat
+      // this as a hard failure on its own; fall through to the wait
+      // loop below and let the device's own "success" notification (if
+      // it already arrived, or still arrives in the next moment) be
+      // the actual source of truth instead of this write's outcome.
+      otaLog('傳送結束指令時連線中斷(這在更新成功、裝置重開機時是正常現象,不代表更新失敗)');
+    }
   }
 
   // Give the device's final success/error notification a few seconds to
@@ -678,6 +691,14 @@ async function runOtaTransfer(buffer) {
   const waitStart = Date.now();
   while (!finished && Date.now() - waitStart < 8000) {
     await new Promise(r => setTimeout(r, 200));
+  }
+
+  if (!finished) {
+    // Never got an explicit success/error notification at all within
+    // the wait window -- genuinely inconclusive, so say so rather than
+    // silently assuming either outcome.
+    setOtaProgress(0, '未收到裝置的最終回應,請確認裝置是否已重新開機、韌體是否更新成功');
+    otaLog('未收到最終回應,狀態不明,請自行確認裝置版本');
   }
 
   statusChar.removeEventListener('characteristicvaluechanged', onStatus);
@@ -807,7 +828,7 @@ menuClearDisplay.addEventListener('click', () => {
 
 menuAbout.addEventListener('click', () => {
   menuPanel.classList.remove('open');
-  log('BeyBlade X 追蹤器 · 透過藍牙即時顯示發射轉速與歷史趨勢');
+  log('BeyBlade X 追蹤器 V1 · 透過藍牙即時顯示發射轉速與歷史趨勢');
 });
 
 menuFirmware.addEventListener('click', openOtaOverlay);
